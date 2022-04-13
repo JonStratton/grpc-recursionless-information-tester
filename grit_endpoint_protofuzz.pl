@@ -1,4 +1,3 @@
-#!/usr/bin/perl
 # Just a POC for now; a wrapper around grpcurl.
 
 use strict;
@@ -6,12 +5,12 @@ use warnings;
 use threads;
 use Getopt::Std;
 use Digest::MD5 qw(md5_base64);
+use IPC::Open2;
 
 my $THREADS = 4;
-my $HOST = 'localhost:50051';
-my $METHOD = 'helloworld.Greeter/SayHello';
 my $DATA = '{"name":"_PAYLOAD1_"}';
-my $PROTO = './helloworld.proto';
+# Formatted to take data from standard in.
+my $GRPCURL = 'grpcurl -plaintext -proto ./helloworld.proto -d @ localhost:50051 helloworld.Greeter/SayHello';
 
 # Command line params
 my %opts = ();
@@ -42,8 +41,7 @@ sub load_payloads {
    my $payload_num = 1;
    foreach my $payload_file (@payload_files) {
       my $payload_name = sprintf('_PAYLOAD%d_', $payload_num);
-      my $fh;
-      if (open($fh, '<', $payload_file)) {
+      if (open(my $fh, '<', $payload_file)) {
          my $thread_num = 0;
          while(my $line = <$fh>) {
             chomp($line);
@@ -61,21 +59,28 @@ sub process_chunk {
    my ($data, $payloads_ref) = @_;
    foreach my $payload_key (keys(%{$payloads_ref})) {
       foreach my $payload (@{${$payloads_ref}{$payload_key}}) {
+         $payload =~ s/"/\\"/g; # Escape " in the payload so it doesnt mess with our json
          my $data_new = $data;
          $data_new =~ s/$payload_key/$payload/g;
          grpc_request($data_new);
-         #print("$data, $payload_key, $payload, $data_new\n");
       }
    }
 }
 
 sub grpc_request {
    my ($data) = @_;
-   my $request = sprintf('grpcurl -plaintext -proto %s -d \'%s\' %s %s', $PROTO, $data, $HOST, $METHOD );
-   my $return = `$request`;
-   my $request_hash = md5_base64($request);
-   printf("Executing(%s): %s\n", $request_hash, $request);
-   printf("Return(%s): %s\n", $request_hash, $return);
+   my $request_hash = md5_base64($data);
+
+   # Open2 for reading and writing pipe
+   my $pid = open2(my $chld_out, my $chld_in, $GRPCURL);
+   print $chld_in $data;
+   close($chld_in); # Need to close the write pipe or thread will hange!
+   my $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
+   waitpid( $pid, 0 );
+
+   printf("Executing(%s): %s\n", $request_hash, $data);
+   printf("Return(%s): %s\n", $request_hash, $line);
+
 }
 
 main();
