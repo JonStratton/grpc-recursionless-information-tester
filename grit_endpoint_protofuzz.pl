@@ -1,4 +1,6 @@
+#!env perl
 # Just a POC for now; a wrapper around grpcurl.
+# perl grit_endpoint_protofuzz.pl -p ~/fuzzdb/attack/all-attacks/all-attacks-unix.txt
 
 use strict;
 use warnings;
@@ -7,7 +9,7 @@ use Getopt::Std;
 use Digest::MD5 qw(md5_base64);
 use IPC::Open2;
 
-my $THREADS = 4;
+my $THREADS = 10;
 my $DATA = '{"name":"_PAYLOAD1_"}';
 # Formatted to take data from standard in.
 my $GRPCURL = 'grpcurl -plaintext -proto ./helloworld.proto -d @ localhost:50051 helloworld.Greeter/SayHello';
@@ -35,6 +37,7 @@ sub main {
    }
 }
 
+# TODO: split our this read from the thread breakdown. 
 sub load_payloads {
    my @payload_files = @_;
    my @payloads = ();
@@ -55,6 +58,8 @@ sub load_payloads {
    return(@payloads);
 }
 
+# TODO: thread breakdown should look like $payloads[$thread_num][] = ({P1 => blah, P2 = blah}, { etc }) so we can deal with multi payloads
+
 sub process_chunk {
    my ($data, $payloads_ref) = @_;
    foreach my $payload_key (keys(%{$payloads_ref})) {
@@ -73,13 +78,16 @@ sub grpc_request {
 
    # Open2 for reading and writing pipe
    my $pid = open2(my $chld_out, my $chld_in, $GRPCURL);
+
+   my $start_time = time;
    print $chld_in $data;
    close($chld_in); # Need to close the write pipe or thread will hange!
    my $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
    waitpid( $pid, 0 );
 
-   printf("Executing(%s): %s\n", $request_hash, $data);
-   printf("Return(%s): %s\n", $request_hash, $line);
+   printf("%s|payload: %s\n", $request_hash, $data);
+   printf("%s|return: %s\n", $request_hash, $line);
+   printf("%s|time: %d\n", $request_hash, (time - $start_time));
 
 }
 
