@@ -11,9 +11,9 @@ use Data::Dumper;
 
 my $MAX_INPUT = 5;
 my $MAX_OUTPUT = 5;
-#my @DATA_TYPES = qw(string int64 bool);
-my @DATA_TYPES = qw(string);
-my %TYPE_TO_DEFAULT = ('string'=>'"s"', 'int64'=>'1', 'bool'=>'true');
+#my @DATA_TYPES = qw(int64 string);
+my @DATA_TYPES = qw(string int64 bool);
+my %TYPE_TO_DEFAULT = ('string'=>'"s"', 'int64'=>'2', 'bool'=>'true');
 
 my $package = 'helloworld';
 my $service = 'Greeter';
@@ -22,12 +22,12 @@ my $serviceName = 'helloworld.Greeter/SayHello';
 my $address = 'localhost:50051';
 my $grpcurlOtherArgs = '-plaintext';
 
-my @inputs  = ();
-my @outputs = ();
+my @inputs  = qw();
+my @outputs = qw();
 
 sub main() {
 
-my $temp_dir = tempdir(CLEANUP => 0);
+my $temp_dir = tempdir(CLEANUP => 1);
 while (scalar(@inputs) < $MAX_INPUT) {
    my $valid_dtype;
    foreach my $dtype (@DATA_TYPES) {
@@ -50,6 +50,7 @@ while (scalar(@inputs) < $MAX_INPUT) {
       # if success, add it to inputs and break. If error / bad type, break for each. If error / no more args, break while
       if ($return) {
          $valid_dtype = $dtype;
+         last; # Take the first one.
       }
    }
 
@@ -70,7 +71,7 @@ while (scalar(@outputs) < $MAX_OUTPUT) {
 
       # Generate proto file based on @temp_inputs
       my $proto = make_proto($package, $service, $method, \@inputs, \@test_outputs);
-      my ($proto_h, $proto_filename) = tempfile(SUFFIX => '.proto', CLEANUP => 0, DIR => $temp_dir);
+      my ($proto_h, $proto_filename) = tempfile(SUFFIX => '.proto', CLEANUP => 1, DIR => $temp_dir);
       print $proto_h $proto;
       close($proto_h);
 
@@ -82,9 +83,9 @@ while (scalar(@outputs) < $MAX_OUTPUT) {
       my $return = grpcurl_request($grpcurl, $data);
 
       # if success, add it to inputs and break. If error / bad type, break for each. If error / no more args, break while
-      print(join(', ', @outputs)."\n");
       if ($return) {
          $valid_dtype = $dtype;
+         last;
       }
    }
 
@@ -96,6 +97,11 @@ while (scalar(@outputs) < $MAX_OUTPUT) {
    }
 }
 
+my $final_proto = make_proto($package, $service, $method, \@inputs, \@outputs);
+my $final_data = make_data(\@inputs);
+my $final_grpcurl = sprintf('grpcurl %s -proto ./my_new.proto -d \'%s\' %s %s', $grpcurlOtherArgs, $final_data, $address, $serviceName);
+
+printf("#%s\n%s\n", $final_grpcurl, $final_proto);
 }
  
 # Open grpcurl as pipe for both writing (so we can send our payloads in in a raw form) and for reading. Dump the output in a format we can log.
@@ -109,17 +115,15 @@ my ($chld_in, $chld_out, $chld_err);
 $chld_err = gensym;
 
 open3($chld_in, $chld_out, $chld_err, $grpcurl);
-die "open3 failed: $@\n" if $@;
-
 print $chld_in $data;
 close($chld_in); # Need to close the write pipe or thread will hange!
 $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
 $error = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_err>);
 
-print("$data\n");
-print("$grpcurl\n");
-print("$line\n");
-print("$error\n");
+#print("$data\n");
+#print("$grpcurl\n");
+#print("$line\n");
+#print("$error\n");
 
 return($line);
 }
