@@ -15,7 +15,7 @@ my %opts = ();
 getopt('gwt', \%opts);
 
 my $WORDLIST = $opts{'w'};
-my $THREADS  = defined($opts{'t'}) ? $opts{'t'} : 1;
+my $THREADS  = defined($opts{'t'}) ? $opts{'t'} : 10;
 my $GRPCURL_ARGS = defined($opts{'g'}) ? $opts{'g'} : '';
 my $ADDRESS  = $ARGV[0];
 my $SERVICE_NAME = $ARGV[1];
@@ -26,11 +26,11 @@ if (!($WORDLIST and $ADDRESS and $SERVICE_NAME)) {
 }
 
 sub main {
-   my @found_methods = fuzz_for_methods($THREADS, $WORDLIST, $ADDRESS, $SERVICE_NAME);
+   my @found_methods = fuzz_methods_main($THREADS, $WORDLIST, $ADDRESS, $SERVICE_NAME);
    printf("Found the following: %s\n", join(', ', @found_methods));
 }
 
-sub fuzz_for_methods {
+sub fuzz_methods_main {
    my ($threads, $wordlist_file, $address, $serviceName) = @_;
 
    # Load workslists into one big array
@@ -39,9 +39,6 @@ sub fuzz_for_methods {
    # Split wordlist into one array per thread
    my @threads_wordlists = split_list(\@wordlist, $threads);
 
-   # Ignore method name as we are going to fuzz that
-   my ($package, $service) = split_serviceName($serviceName);
-
    # Temp Dir to keep /tmp/ clean
    my $temp_dir = tempdir(CLEANUP => 1);
 
@@ -49,7 +46,7 @@ sub fuzz_for_methods {
    my @threads = ();
    foreach my $thread_num (0..($threads-1)) {
       next unless defined($threads_wordlists[$thread_num]); # In case we have more threads than words
-      push(@threads, threads->create('fuzz_methods', $address, $package, $service, \@{$threads_wordlists[$thread_num]}, $temp_dir));
+      push(@threads, threads->create('fuzz_methods_batch', $address, $serviceName, \@{$threads_wordlists[$thread_num]}, $temp_dir));
    }
 
    # Wait for all the threads to return
@@ -62,9 +59,12 @@ sub fuzz_for_methods {
 }
 
 # Create a proto file with method names
-sub fuzz_methods {
-   my ($address, $package, $service, $payloads_ref, $temp_dir) = @_;
+sub fuzz_methods_batch {
+   my ($address, $serviceName, $payloads_ref, $temp_dir) = @_;
    my @found_methods = ();
+
+   # Ignore method name as we are going to fuzz that
+   my ($package, $service) = split_serviceName($serviceName);
 
    # 1, Create proto file
    my @io = qw(string);

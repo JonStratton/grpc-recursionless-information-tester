@@ -7,32 +7,44 @@ use warnings;
 use threads;
 use Getopt::Std;
 use Digest::MD5 qw(md5_base64);
-use IPC::Open2;
+use IPC::Open3;
+use Symbol 'gensym';
 use Time::HiRes qw(time);
 
 # Command line params
 my %opts = ();
-getopt('gdpt', \%opts);
+getopt('gdwt', \%opts);
 
-my @PAYLOAD_FILES = defined($opts{'p'}) ? split( /,\s*/, $opts{'p'} ) : ();
-my $THREADS = defined($opts{'t'}) ? $opts{'t'} : 10;
-my $DATA    = $opts{'d'};
-my $GRPCURL = $opts{'g'};
-if (!($THREADS and $DATA and $GRPCURL)) {
-   print "$0 -p ~/fuzzdb/attack/all-attacks/all-attacks-unix.txt -d '{\"name\":\"_PAYLOAD_\"}' -g 'grpcurl -plaintext -proto ./helloworld.proto -d @ localhost:50051 helloworld.Greeter/SayHello'\n";
+my $WORDLIST = $opts{'w'};
+my $THREADS  = defined($opts{'t'}) ? $opts{'t'} : 10;
+my $GRPCURL_ARGS = defined($opts{'g'}) ? $opts{'g'} : '';
+my $DATA     = $opts{'d'};
+my $ADDRESS  = $ARGV[0];
+my $SERVICE_NAME = $ARGV[1];
+
+if (!($DATA and $ADDRESS and $SERVICE_NAME)) {
+   print "$0 -w ~/fuzzdb/attack/all-attacks/all-attacks-unix.txt -d '{\"name\":\"_PAYLOAD_\"}' -g '-plaintext -proto ./helloworld.proto' localhost:50051 helloworld.Greeter/SayHello\n";
    exit(1);
 }
 
 sub main {
-   # Load Payloads and break down by threads. Looks like $payloads[thread#]
-   my @threads_payloads = load_payloads(@PAYLOAD_FILES);
+   fuzz_proto_main($THREADS, $WORDLIST, $ADDRESS, $SERVICE_NAME, $DATA);
+}
+
+sub fuzz_proto_main {
+   my ($threads, $wordlist_file, $address, $serviceName, $data) = @_;
+
+   # Load workslists into one big array
+   my @wordlist = load_wordlist($wordlist_file);
+
+   # Split wordlist into one array per thread
+   my @threads_wordlists = split_list(\@wordlist, $threads);
 
    # Process workload
    my @threads = ();
-   foreach my $thread_num (0..($THREADS-1)) {
-      next unless defined($threads_payloads[$thread_num]);
-      my @payloads = @{$threads_payloads[$thread_num]};
-      push(@threads, threads->create('process_chunk', $DATA, \@payloads));
+   foreach my $thread_num (0..($threads-1)) {
+      next unless defined($threads_wordlists[$thread_num]);
+      push(@threads, threads->create('fuzz_proto_batch', $address, $serviceName, \@{$threads_wordlists[$thread_num]}, $data));
    }
 
    # Wait for all the threads to return
@@ -41,48 +53,64 @@ sub main {
    }
 }
 
-# Load a wordlist and break it down by thread
-sub load_payloads {
-   my @payload_files = @_;
-   my @payloads = ();
-   foreach my $payload_file (@payload_files) {
-      if (open(my $fh, '<', $payload_file)) {
-         my $thread_num = 0;
-         while(my $line = <$fh>) {
-            chomp($line);
-            push(@{$payloads[$thread_num]}, $line);
-            $thread_num = ($thread_num+1) % $THREADS;
-         }
-         close($fh);
-      }
-   }
-   return(@payloads);
-}
-
 # Replace "_PAYLOAD_" in DATA for each payload in our wordlist, then send it to grpc_request().
-sub process_chunk {
-   my ($data, $payloads_ref) = @_;
+sub fuzz_proto_batch {
+   my ($address, $serviceName, $payloads_ref, $data) = @_;
+
    foreach my $payload (@{$payloads_ref}) {
       $payload =~ s/"/\\"/g; # Escape " in the payload so it doesnt mess with our json
       my $data_new = $data;
       $data_new =~ s/_PAYLOAD_/$payload/g;
-      grpc_request($data_new);
+
+      my $grpcurl_new = sprintf("grpcurl %s -d @ %s %s", $GRPCURL_ARGS, $address, $serviceName);
+      grpcurl_request($grpcurl_new, $data_new);
    }
 }
 
+# Split a wordlist into chunks to be processes by a thread
+sub split_list {
+   my ($list_ref, $chunks) = @_;
+   my @lol = ();
+   my $chunk_num = 0;
+   foreach my $item (@{$list_ref}) {
+      push(@{$lol[$chunk_num]}, $item);
+      $chunk_num = ($chunk_num+1) % $chunks;
+   }
+   return(@lol);
+}
+
+# Simply read a file and push it into an array
+sub load_wordlist {
+   my ($wordlist_file) = @_;
+   my @wordlist = ();
+   if (open(my $wordlist_h, '<', $wordlist_file)) {
+      while(my $line = <$wordlist_h>) {
+         chomp($line);
+         push(@wordlist, $line);
+      }
+      close($wordlist_h);
+   } else {
+      warn(sprintf("Warning, the following file does not exist or is not readable: %s\n", $wordlist_file));
+   }
+   return(@wordlist);
+}
+
 # Open grpcurl as pipe for both writing (so we can send our payloads in in a raw form) and for reading. Dump the output in a format we can log.
-sub grpc_request {
-   my ($data) = @_;
+sub grpcurl_request {
+   my ($grpcurl, $data) = @_;
    my $request_hash = md5_base64($data);
 
-   # Open2 for reading and writing pipe
-   my $pid = open2(my $chld_out, my $chld_in, $GRPCURL);
+   # Open3 for reading and writing pipe
+   my ($chld_in, $chld_out, $chld_err, $line, $error);
+   $chld_err = gensym;
+
+   open3($chld_in, $chld_out, $chld_err, $grpcurl);
 
    my $start_time = time;
    print $chld_in $data;
    close($chld_in); # Need to close the write pipe or thread will hange!
-   my $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
-   waitpid( $pid, 0 );
+   $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
+   $error = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_err>);
 
    printf("%s|payload: %s\n", $request_hash, $data);
    printf("%s|return: %s\n", $request_hash, $line);
