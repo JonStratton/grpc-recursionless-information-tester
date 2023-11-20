@@ -1,0 +1,42 @@
+###############
+# Install Env #
+###############
+
+# GRPC Example Hello World Service
+##########
+	# https://grpc.io/docs/languages/ruby/quickstart/
+# apt-get install git screen golang ruby
+# gem install grpc
+# gem install grpc-tools
+$ git clone --depth 1 --shallow-submodules https://github.com/grpc/grpc
+$ cd grpc/examples/ruby
+$ ruby greeter_server.rb
+...$ ruby greeter_client.rb
+
+# Grpcurl
+################
+wget https://github.com/fullstorydev/grpcurl/releases/download/v1.8.9/grpcurl_1.8.9_linux_x86_64.tar.gz
+tar xzf grpcurl_1.8.9_linux_x86_64.tar.gz
+cp grpc/examples/protos/helloworld.proto .
+./grpcurl -plaintext -proto ./helloworld.proto -d '{"name":"World"}' localhost:50051 helloworld.Greeter/SayHello
+sudo mv grpcurl /usr/bin/
+
+########
+# GRIT #
+########
+git clone https://github.com/JonStratton/grpc-reflectionless-information-tester
+
+# Fuzz for methods / paths
+wget https://raw.githubusercontent.com/fuzzdb-project/fuzzdb/master/discovery/common-methods/common-methods.txt
+echo SayHello >> ./common-methods.txt
+perl grit_endpoint_methodfuzz.pl -w ./common-methods.txt -g '-plaintext' -v localhost:50051 helloworld.Greeter
+...
+grpcurl -plaintext -import-path /tmp/B8L_mStqRx -proto /tmp/B8L_mStqRx/lHD1IOLj5X.proto -d @ localhost:50051 helloworld.Greeter/withdrawals
+Found the following: SayHello
+
+# Work in progress
+grit_endpoint_protodump.pl
+
+# Fuzz a field inside of a 
+wget https://raw.githubusercontent.com/fuzzdb-project/fuzzdb/master/attack/all-attacks/all-attacks-unix.txt
+perl grit_endpoint_protofuzz.pl -w ./all-attacks-unix.txt -d '{"name":"_PAYLOAD_"}' -g '-plaintext -proto ./helloworld.proto' localhost:50051 helloworld.Greeter/SayHello

@@ -13,7 +13,7 @@ use Time::HiRes qw(time);
 
 # Command line params
 my %opts = ();
-getopt('gdwt', \%opts);
+getopts('g:d:w:t:', \%opts);
 
 my $WORDLIST = $opts{'w'};
 my $THREADS  = defined($opts{'t'}) ? $opts{'t'} : 10;
@@ -23,7 +23,7 @@ my $ADDRESS  = $ARGV[0];
 my $SERVICE_NAME = $ARGV[1];
 
 if (!($DATA and $ADDRESS and $SERVICE_NAME)) {
-   print "$0 -w ~/fuzzdb/attack/all-attacks/all-attacks-unix.txt -d '{\"name\":\"_PAYLOAD_\"}' -g '-plaintext -proto ./helloworld.proto' localhost:50051 helloworld.Greeter/SayHello\n";
+   print "$0 -w ./all-attacks-unix.txt -d '{\"name\":\"_PAYLOAD_\"}' -g '-plaintext -proto ./helloworld.proto' localhost:50051 helloworld.Greeter/SayHello\n";
    exit(1);
 }
 

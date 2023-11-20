@@ -12,8 +12,9 @@ use File::Temp qw(tempfile tempdir);
 
 # Command line params
 my %opts = ();
-getopt('gwt', \%opts);
+getopts('vg:w:t:', \%opts);
 
+my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
 my $WORDLIST = $opts{'w'};
 my $THREADS  = defined($opts{'t'}) ? $opts{'t'} : 10;
 my $GRPCURL_ARGS = defined($opts{'g'}) ? $opts{'g'} : '';
@@ -21,7 +22,7 @@ my $ADDRESS  = $ARGV[0];
 my $SERVICE_NAME = $ARGV[1];
 
 if (!($WORDLIST and $ADDRESS and $SERVICE_NAME)) {
-   print "$0 -w ~/fuzzdb/discovery/common-methods/common-methods.txt -g '-plaintext' localhost:50051 helloworld.Greeter/SayHello'\n";
+   print "$0 -w ./common-methods.txt -g '-plaintext' localhost:50051 helloworld.Greeter/SayHello\n";
    exit(1);
 }
 
@@ -76,7 +77,7 @@ sub fuzz_methods_batch {
    # 2. Execute method with proto file
    foreach my $payload (@{$payloads_ref}) {
       my $grpcurl_new = sprintf("grpcurl %s -import-path %s -proto %s -d @ %s %s.%s/%s", $GRPCURL_ARGS, $temp_dir, $proto_filename, $address, $package, $service, $payload);
-      #printf("%s\n", $grpcurl_new);
+      printf("%s\n", $grpcurl_new) if ($VERBOSE);
       my $grpcurl_return = grpcurl_request($grpcurl_new, '{"x1":"1"}');
       if ($grpcurl_return) {
          push(@found_methods, $payload);
