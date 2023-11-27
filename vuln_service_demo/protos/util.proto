@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package util;
+import "google/protobuf/empty.proto";
+
+service Users {
+  //rpc XxXx (UsersRequest) returns (UsersListReply) {}
+  rpc List (google.protobuf.Empty) returns (UsersListReply) {}
+  rpc Check (UsersRequest) returns (UsersListReply) {}
+  rpc Types (ComplexRequest) returns (TypesReply) {}
+}
+
+message UsersRequest {
+  string username = 1;
+}
+
+message UsersListReply {
+  repeated string usernames = 1;
+}
+
+message ComplexRequest {
+  string str = 1;
+  double dbl = 2;
+  bool boo = 3;
+  int32 int = 4;
+}
+
+message TypesReply {
+  bool boo = 1;
+}
