@@ -4,9 +4,7 @@
 #################
 # TODO:
 # Deal with enums. Just make them int32s?
-# Deal with messages that contain other messages. RECURSION!! YES!!!
 # Deal with maps. No idea.
-# Gen gRPCurl OR payloadify for other scripts. Or maybe thats its own script
 #################
 
 use strict;
@@ -16,9 +14,10 @@ use Data::Dumper;
 
 # Command line params
 my %opts = ();
-getopts('p:v', \%opts);
+getopts('vp:w:', \%opts);
 
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
+my $WORDLIST = $opts{'w'};
 my @PROTOFILES = defined($opts{'p'}) ? split(/,\s*/, $opts{'p'}, -1) : [];
 my $ADDRESS   = $ARGV[0];
 
@@ -27,36 +26,87 @@ if (!(@PROTOFILES and $ADDRESS)) {
    exit(1);
 }
 
+my %TypesToDefaults = (
+   '_string_' => 'a',
+   '_int32_' => 1
+);
+
+########
+# Main #
+########
+
 sub main {
    my (%services, %messages);
    foreach my $protofile (@PROTOFILES) {
        parse_proto_file($protofile, \%services, \%messages);
    }
 
+   # Gen test skeleton
    foreach my $package (sort(keys(%services))) {
      foreach my $service (sort(keys(%{$services{$package}}))) {
         foreach my $rpc (sort(keys(%{$services{$package}{$service}}))) {
             my $servicePath = sprintf("%s.%s/%s", $package, $service, $rpc);
             my $request   = $services{$package}{$service}{$rpc}{'request'};
             my $protofile = $services{$package}{$service}{$rpc}{'protofile'};
+            my $data_string = params_to_string($request, $messages{$package});
+            #printf("grpcurl -proto %s -d '%s' %s %s", $protofile, $data_string, $ADDRESS, $servicePath);
 
-            my @params;
-            if (defined($messages{$package}{$request})) {
-               foreach my $paramSet (@{$messages{$package}{$request}}) {
-                  push(@params, sprintf("\"%s\":\"_%s_\"", ${$paramSet}{'name'}, ${$paramSet}{'type'}));
-               }
+            foreach my $data_test (data_to_tests($data_string)) {
+                my $grit_cmd = sprintf("grit_endpoint_protofuzz.pl -w %s -d '%s' -g '-plaintext -proto %s' %s %s", $WORDLIST, $data_test, $protofile, $ADDRESS, $servicePath);
+                printf("%s\n", $grit_cmd);
             }
-            my $data = join(', ', @params);
-
-            # grpcurl -plaintext -proto ./protos/util.proto -d '{}' localhost:50051 util.Users/Types
-            my $grpcurl_cmd = sprintf("grpcurl -proto %s -d '{%s}' %s %s", $protofile, $data, $ADDRESS, $servicePath);
-            printf("%s\n", $grpcurl_cmd);
          }
       }
    }
 }
 
-# All out ugly proto parsing at the bottom so we dont have to see it.
+# Converts {"blah1":"_string_","blah2":"_string_"} to {"blah1":"_PAYLOAD_","blah2":"a"} and {"blah1":"a","blah2":"_PAYLOAD_"}
+sub data_to_tests {
+   my ($data_string) = @_;
+   
+   my @substItems; # A list of the _blah_s
+   while($data_string =~ /(_\w+_)/g) { push(@substItems, $1) }
+
+   my @tests;
+   foreach my $pos (1..scalar(@substItems)) {
+      my $temp_data = $data_string;
+      foreach my $pos2 (1..scalar(@substItems)) {
+         my $oldValue = $substItems[$pos2-1];
+         my $newValue = '_PAYLOAD_';
+         if ($pos != $pos2) {
+             $newValue = defined($TypesToDefaults{$oldValue}) ? $TypesToDefaults{$oldValue} : 1;
+         }
+         $temp_data =~ s/$oldValue/$newValue/;
+      }
+      #$tests[$pos-1] = $temp_data;
+      push(@tests, $temp_data);
+   }
+
+   return(@tests);
+}
+
+# Recursion for nested objects
+sub params_to_string {
+   my ($message_name, $packMesg_ref) = @_;
+   my @params;
+   if (defined(${$packMesg_ref}{$message_name})) {
+      foreach my $paramSet (@{${$packMesg_ref}{$message_name}}) {
+         next unless defined(${$paramSet}{'name'}); # Gaps in numbers in the protofiles
+         my $type = ${$paramSet}{'type'};
+         # Is type just another object name?
+
+         my $type_string = sprintf("\"_%s_\"", ${$paramSet}{'type'});
+         if (defined(${$packMesg_ref}{$type})) {
+            $type_string = params_to_string($type, $packMesg_ref);
+         }
+
+         push(@params, sprintf("\"%s\":%s", ${$paramSet}{'name'}, $type_string));
+      }
+   }
+   return(sprintf("{%s}", join(', ', @params)));
+}
+
+# All our ugly proto parsing at the bottom so we dont have to see it.
 sub parse_proto_file {
    my ($protofile, $services_ref, $messages_ref) = @_;
    my ($package);
@@ -84,7 +134,7 @@ sub parse_proto_file {
          }
 
          # "rpc SayHelloStreamReply (HelloRequest) returns (stream HelloReply) {}"
-         if (($line =~ /^\s*rpc\s*(\w+)\s+\((.+)\)\s+returns\s*\((.+)\)\s+{}/) && $inService) {
+         if (($line =~ /^\s*rpc\s+(\w+)\s*\((.+)\)\s+returns\s+\((.+)\)\s*{}/) && $inService) {
             my ($rpcName, $request, $reply) = ($1, $2, $3);
             # Need to save profofile with the service for later use with grpcurl
             ${$services_ref}{$package}{$inService}{$rpcName} = {'request' => $request, 'reply' => $reply, 'protofile' => $protofile};
@@ -97,7 +147,7 @@ sub parse_proto_file {
          }
 
          # "string name = 1;"
-         if (($line =~ /\s*(\w+)\s*(\w+)\s+=\s+(\d+);/) && $inMessage) {
+         if (($line =~ /^\s*(\w+)\s+(\w+)\s+=\s+(\d+);/) && $inMessage) {
             my ($type, $name, $pos) = ($1, $2, $3);
             ${${$messages_ref}{$package}{$inMessage}}[$pos - 1] = {'type' => $type, 'name' => $name}
          }
@@ -114,7 +164,8 @@ sub parse_proto_file {
    } else {
       warn(sprintf("Warning, the following file does not exist or is not readable: %s\n", $protofile));
    }
-   return($package);
+   return(0);
 }
 
 main();
+-1;
