@@ -5,6 +5,8 @@
 # TODO:
 # Deal with enums. Just make them int32s?
 # Deal with maps. No idea.
+# Default values that is a config, and can default based on package/service/name
+# Replace __ with something better, like the ascii delim char ()
 #################
 
 use strict;
@@ -19,7 +21,7 @@ getopts('vp:w:', \%opts);
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
 my $WORDLIST = $opts{'w'};
 my @PROTOFILES = defined($opts{'p'}) ? split(/,\s*/, $opts{'p'}, -1) : [];
-my $ADDRESS   = $ARGV[0];
+my $ADDRESS = $ARGV[0];
 
 if (!(@PROTOFILES and $ADDRESS)) {
    print "$0 -p ./helloworld.proto localhost:50051\n";
@@ -27,8 +29,8 @@ if (!(@PROTOFILES and $ADDRESS)) {
 }
 
 my %TypesToDefaults = (
-   '_string_' => 'a',
-   '_int32_' => 1
+   '__string__' => 'a',
+   '__int32__' => 1
 );
 
 ########
@@ -65,7 +67,8 @@ sub data_to_tests {
    my ($data_string) = @_;
    
    my @substItems; # A list of the _blah_s
-   while($data_string =~ /(_\w+_)/g) { push(@substItems, $1) }
+   # TODO, \w+ isnt detecting our complex data types like "map<string,string>". But __.+__ and __(^_)+__ isnt working. 
+   while($data_string =~ /(__\w+__)/g) { push(@substItems, $1) }
 
    my @tests;
    foreach my $pos (1..scalar(@substItems)) {
@@ -78,7 +81,6 @@ sub data_to_tests {
          }
          $temp_data =~ s/$oldValue/$newValue/;
       }
-      #$tests[$pos-1] = $temp_data;
       push(@tests, $temp_data);
    }
 
@@ -95,7 +97,7 @@ sub params_to_string {
          my $type = ${$paramSet}{'type'};
          # Is type just another object name?
 
-         my $type_string = sprintf("\"_%s_\"", ${$paramSet}{'type'});
+         my $type_string = sprintf("\"__%s__\"", ${$paramSet}{'type'});
          if (defined(${$packMesg_ref}{$type})) {
             $type_string = params_to_string($type, $packMesg_ref);
          }
@@ -114,50 +116,59 @@ sub parse_proto_file {
 
    if (open(my $protofile_h, '<', $protofile)) {
 
-      my ($inService, $inMessage);
+      my @level;
       while(my $line = <$protofile_h>) {
          chomp($line);
 
-         # "//", just skip this line
-         if ($line =~ /^\s*\/\//) {
-            next;
-         }
+         # Strip out padded whitespace, comments, and empty lines
+         $line =~ s/(^\s*)|(\s*$)//;
+         $line =~ s/\s*\/\/.*$//;
+         $line =~ s/\s*\/\*.*$//;
+         next unless ($line);
 
          # "package helloworld;"
-         if ($line =~ /^\s*package\s+(.+);/) {
+         if ($line =~ /^package\s+(.+);/) {
             $package = $1;
          }
 
          # "service Greeter {", Get the service name. We are in service.
-         if (($line =~ /^\s*service\s+(\w+)\s+{/) && !$inService) {
-            $inService = $1;
+         if ($line =~ /^service\s+(\w+)\s+{/) {
+            push(@level, {'name' => $1, 'type' => 'service'});
          }
 
          # "rpc SayHelloStreamReply (HelloRequest) returns (stream HelloReply) {}"
-         if (($line =~ /^\s*rpc\s+(\w+)\s*\((.+)\)\s+returns\s+\((.+)\)\s*{}/) && $inService) {
+         if (($line =~ /^rpc\s+(\w+)\s*\((.+)\)\s+returns\s+\((.+)\)\s*{}/) && @level && $level[-1]{'type'} eq 'service') {
             my ($rpcName, $request, $reply) = ($1, $2, $3);
+            my $serviceName = $level[-1]{'name'};
             # Need to save profofile with the service for later use with grpcurl
-            ${$services_ref}{$package}{$inService}{$rpcName} = {'request' => $request, 'reply' => $reply, 'protofile' => $protofile};
+            ${$services_ref}{$package}{$serviceName}{$rpcName} = {'request' => $request, 'reply' => $reply, 'protofile' => $protofile};
          }
 
          # "message HelloRequest {", Get the message name.
-         if (($line =~ /^\s*message\s+(\w+)\s*{/) && !$inMessage) {
-            $inMessage = $1;
-            ${$messages_ref}{$package}{$inMessage} = [];
+         if ($line =~ /^message\s+(\w+)\s*{$/) {
+            push(@level, {'name' => $1, 'type' => 'message'});
+            ${$messages_ref}{$package}{$1} = [];
          }
 
          # "string name = 1;"
-         if (($line =~ /^\s*(\w+)\s+(\w+)\s+=\s+(\d+);/) && $inMessage) {
+         if (($line =~ /^(.+)\s+(\w+)\s+=\s+(\d+);/) && @level && $level[-1]{'type'} eq 'message') {
             my ($type, $name, $pos) = ($1, $2, $3);
-            ${${$messages_ref}{$package}{$inMessage}}[$pos - 1] = {'type' => $type, 'name' => $name}
+            my $messageName = $level[-1]{'name'};
+            # my ($repeated, $optional);
+            my $repeated = $type =~ s/\s*repeated\s*//g;
+            my $optional = $type =~ s/\s*optional\s*//g;
+            ${${$messages_ref}{$package}{$messageName}}[$pos - 1] = {'type' => $type, 'name' => $name, 'repeated' => $repeated, 'optional' => $optional}
          }
 
-         # "}", close multiline service or message. 
-         if ($line =~ /^\s*}\s*$/) {
-            undef($inService);
-            undef($inMessage)
+         # "enum Blah {". Deal with enums so we can at least ignore them
+         if ($line =~ /^enum\s+(\w+)\s*{$/) {
+            push(@level, {'name' => $1, 'type' => 'enum'});
          }
 
+         # "}", close multiline thing based on whats the last thing open
+         if ($line =~ /^}$/) {
+            pop(@level);
+         }
       }
       close($protofile_h);
 
@@ -168,4 +179,4 @@ sub parse_proto_file {
 }
 
 main();
--1;
+exit(0);
