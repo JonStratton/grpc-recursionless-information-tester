@@ -4,9 +4,7 @@
 #################
 # TODO:
 # Deal with enums. Just make them int32s?
-# Deal with maps. No idea.
 # Default values that is a config, and can default based on package/service/name
-# Replace __ with something better, like the ascii delim char ()
 #################
 
 use strict;
@@ -29,8 +27,8 @@ if (!(@PROTOFILES and $ADDRESS)) {
 }
 
 my %TypesToDefaults = (
-   '__string__' => 'a',
-   '__int32__' => 1
+   'string' => 'a',
+   'int32' => 1
 );
 
 ########
@@ -67,8 +65,7 @@ sub data_to_tests {
    my ($data_string) = @_;
    
    my @substItems; # A list of the _blah_s
-   # TODO, \w+ isnt detecting our complex data types like "map<string,string>". But __.+__ and __(^_)+__ isnt working. 
-   while($data_string =~ /(__\w+__)/g) { push(@substItems, $1) }
+   while($data_string =~ /([^]+)/g) { push(@substItems, $1) }
 
    my @tests;
    foreach my $pos (1..scalar(@substItems)) {
@@ -77,7 +74,9 @@ sub data_to_tests {
          my $oldValue = $substItems[$pos2-1];
          my $newValue = '_PAYLOAD_';
          if ($pos != $pos2) {
-             $newValue = defined($TypesToDefaults{$oldValue}) ? $TypesToDefaults{$oldValue} : 1;
+             my $oldTypeClean = $oldValue;
+             $oldTypeClean =~ s///g;
+             $newValue = defined($TypesToDefaults{$oldTypeClean}) ? $TypesToDefaults{$oldTypeClean} : 1;
          }
          $temp_data =~ s/$oldValue/$newValue/;
       }
@@ -97,7 +96,7 @@ sub params_to_string {
          my $type = ${$paramSet}{'type'};
          # Is type just another object name?
 
-         my $type_string = sprintf("\"__%s__\"", ${$paramSet}{'type'});
+         my $type_string = sprintf("\"%s\"", ${$paramSet}{'type'});
          if (defined(${$packMesg_ref}{$type})) {
             $type_string = params_to_string($type, $packMesg_ref);
          }
