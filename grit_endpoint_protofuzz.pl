@@ -63,7 +63,7 @@ sub fuzz_proto_batch {
       $data_new =~ s/_PAYLOAD_/$payload/g;
 
       my $grpcurl_new = sprintf("grpcurl %s -d @ %s %s", $GRPCURL_ARGS, $address, $serviceName);
-      grpcurl_request($grpcurl_new, $data_new);
+      grpcurl_request($grpcurl_new, $data_new, $serviceName);
    }
 }
 
@@ -97,7 +97,7 @@ sub load_wordlist {
 
 # Open grpcurl as pipe for both writing (so we can send our payloads in in a raw form) and for reading. Dump the output in a format we can log.
 sub grpcurl_request {
-   my ($grpcurl, $data) = @_;
+   my ($grpcurl, $data, $service) = @_;
    my $request_hash = md5_base64($data);
 
    # Open3 for reading and writing pipe
@@ -112,6 +112,7 @@ sub grpcurl_request {
    $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
    $error = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_err>);
 
+   printf("%s|service: %s\n", $request_hash, $service);
    printf("%s|payload: %s\n", $request_hash, $data);
    printf("%s|return: %s\n", $request_hash, $line);
    printf("%s|time: %f\n", $request_hash, (time - $start_time));

@@ -18,7 +18,7 @@ getopts('vi:', \%opts);
 
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
 my @INFILES = defined($opts{'i'}) ? split(/,\s*/, $opts{'i'}, -1) : [];
-my $OUTLIER_ZSCORE = 2.5;
+my $OUTLIER_ZSCORE = 2;
 
 if (!(@INFILES)) {
    print "$0 -i ./myInputFile.txt\n";
@@ -35,8 +35,18 @@ sub main {
        read_infile($infile, \%reportData);
    }
 
-   my @outliers = find_outliers(%reportData);
-   printf("Outliers: %s\n", join(', ', @outliers));
+   # Sort the above records by service.
+   my %serviceToReportData;
+   foreach my $id (keys(%reportData)) {
+      my $service = $reportData{$id}{'service'};
+      $serviceToReportData{$service}{$id} = $reportData{$id};
+   }
+
+   my @outliers;
+   foreach my $service (keys(%serviceToReportData)) {
+      push(@outliers, find_outliers(%{$serviceToReportData{$service}}));
+   }
+   printf("Outliers: %s\n", join(', ', @outliers)) if (@outliers);
 
    return 0;
 }
@@ -58,7 +68,7 @@ sub standard_dev {
 # Just transaction time and return length across all records as of now.
 sub find_outliers {
    my (%reportData) = @_;
-   
+
    my (%metricsToCheck);
    foreach my $id (keys(%reportData)) {
       push(@{$metricsToCheck{'time'}}, $reportData{$id}{'time'});
@@ -73,10 +83,10 @@ sub find_outliers {
    my @outliers;
    foreach my $id (keys(%reportData)) {
       my ($timeStddev, $timeMean) = @{$metricsToStddev{'time'}};
-      push(@outliers, $id) if ((($reportData{$id}{'time'} - $timeMean) / $timeStddev) >= $OUTLIER_ZSCORE);
+      push(@outliers, $id) if ($timeStddev && ((($reportData{$id}{'time'} - $timeMean) / $timeStddev) >= $OUTLIER_ZSCORE));
 
       my ($returnStddev, $returnMean) = @{$metricsToStddev{'returnLength'}};
-      push(@outliers, $id) if (((length($reportData{$id}{'return'}) - $returnMean) / $returnStddev) >= $OUTLIER_ZSCORE);
+      push(@outliers, $id) if ($returnStddev && (((length($reportData{$id}{'return'}) - $returnMean) / $returnStddev) >= $OUTLIER_ZSCORE));
    }
    return(@outliers);
 }
