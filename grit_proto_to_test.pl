@@ -14,12 +14,13 @@ use Data::Dumper;
 
 # Command line params
 my %opts = ();
-getopts('vp:w:', \%opts);
+getopts('vp:w:d:', \%opts);
 
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
 my $WORDLIST = $opts{'w'};
 my @PROTOFILES = defined($opts{'p'}) ? split(/,\s*/, $opts{'p'}, -1) : [];
 my $ADDRESS = $ARGV[0];
+my $DEFAULTS_JSON = $opts{'d'};
 
 if (!(@PROTOFILES and $ADDRESS)) {
    print "$0 -p ./helloworld.proto localhost:50051\n";
@@ -31,9 +32,20 @@ my %TypesToDefaults = (
    'int32' => 1
 );
 
+my %CustomDefaults = (); # User supplied via JSON
+
 ########
 # Main #
 ########
+
+if ($DEFAULTS_JSON && -e $DEFAULTS_JSON) {
+   use JSON; # libjson-pp-perl
+   printf("Reading: %s\n", $DEFAULTS_JSON) if ($VERBOSE);
+   open(my $json_h, '<', $DEFAULTS_JSON) or warn(sprintf("Warning, the following file does not exist or is not readable: %s\n", $DEFAULTS_JSON));
+   my $json = join('', <$json_h>);
+   close($json_h);
+   %CustomDefaults = %{decode_json($json)};
+}
 
 sub main {
    my (%services, %messages);
@@ -62,25 +74,31 @@ sub main {
 
 # Converts {"blah1":"_string_","blah2":"_string_"} to {"blah1":"_PAYLOAD_","blah2":"a"} and {"blah1":"a","blah2":"_PAYLOAD_"}
 sub data_to_tests {
-   my ($data_string) = @_;
+   my ($in_string) = @_;
    
-   my @substItems; # A list of the _blah_s
-   while($data_string =~ /([^]+)/g) { push(@substItems, $1) }
+   my @substItems; # TODO, move this to something returned from params_to_string() rather that parse stuff back out of a string we just created...
+   while($in_string =~ /"([^"]+)":"([^]+)"/g) { push(@substItems, {'name'=>$1, 'type'=>$2}) }
 
    my @tests;
-   foreach my $pos (1..scalar(@substItems)) {
-      my $temp_data = $data_string;
-      foreach my $pos2 (1..scalar(@substItems)) {
-         my $oldValue = $substItems[$pos2-1];
-         my $newValue = '_PAYLOAD_';
-         if ($pos != $pos2) {
-             my $oldTypeClean = $oldValue;
-             $oldTypeClean =~ s///g;
-             $newValue = defined($TypesToDefaults{$oldTypeClean}) ? $TypesToDefaults{$oldTypeClean} : 1;
+   foreach my $fuzzIndex (0..(scalar(@substItems))) { # Foreach key/value pair from the payload, we want to make a new test for each set
+      my $temp_string = $in_string;
+      my $pairIndex = 0;
+      foreach my $pairRef (@substItems) { # Set defaults, unless we are looking at the pair we want to fuzz
+         my ($name, $type) = (${$pairRef}{'name'}, ${$pairRef}{'type'});
+         my $value = '_PAYLOAD_';
+         if ($fuzzIndex != $pairIndex) {
+            if (defined($CustomDefaults{$name})) {
+               $value = $CustomDefaults{$name};
+            } elsif (defined($TypesToDefaults{$type})) {
+               $value = $TypesToDefaults{$type};
+            } else {
+               $value = 1;
+            }
          }
-         $temp_data =~ s/$oldValue/$newValue/;
+         $temp_string =~ s/$type/$value/;
+         $pairIndex++;
       }
-      push(@tests, $temp_data);
+      push(@tests, $temp_string);
    }
 
    return(@tests);
