@@ -29,7 +29,8 @@ if (!(@PROTOFILES and $ADDRESS)) {
 
 my %TypesToDefaults = (
    'string' => 'a',
-   'int32' => 1
+   'int32' => 1,
+   'bool' => 'true'
 );
 
 my %CustomDefaults = (); # User supplied via JSON
@@ -80,7 +81,7 @@ sub data_to_tests {
    while($in_string =~ /"([^"]+)":"([^]+)"/g) { push(@substItems, {'name'=>$1, 'type'=>$2}) }
 
    my @tests;
-   foreach my $fuzzIndex (0..(scalar(@substItems))) { # Foreach key/value pair from the payload, we want to make a new test for each set
+   foreach my $fuzzIndex (0..(scalar(@substItems)-1)) { # Foreach key/value pair from the payload, we want to make a new test for each set
       my $temp_string = $in_string;
       my $pairIndex = 0;
       foreach my $pairRef (@substItems) { # Set defaults, unless we are looking at the pair we want to fuzz
