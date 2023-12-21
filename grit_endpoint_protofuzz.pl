@@ -1,4 +1,4 @@
-#!env perl
+#!/usr/bin/env perl
 # https://github.com/JonStratton/grpc-reflectionless-information-tester
 # Fuzz a known endpoint / method / proto combo with a wordlist.
 

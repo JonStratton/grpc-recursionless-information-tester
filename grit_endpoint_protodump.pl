@@ -1,4 +1,4 @@
-#!env perl
+#!/usr/bin/env perl
 # https://github.com/JonStratton/grpc-reflectionless-information-tester
 # Try to guess / dump a proto file from a known endpoint / method combo.
 

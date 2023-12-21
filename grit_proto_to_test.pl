@@ -1,4 +1,4 @@
-#!env perl
+#!/usr/bin/env perl
 # https://github.com/JonStratton/grpc-reflectionless-information-tester
 # Parses a proto file and builds some grpcurl commands.
 #################
@@ -14,13 +14,14 @@ use Data::Dumper;
 
 # Command line params
 my %opts = ();
-getopts('vp:w:d:', \%opts);
+getopts('vp:w:d:g:', \%opts);
 
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
 my $WORDLIST = $opts{'w'};
 my @PROTOFILES = defined($opts{'p'}) ? split(/,\s*/, $opts{'p'}, -1) : [];
 my $ADDRESS = $ARGV[0];
 my $DEFAULTS_JSON = $opts{'d'};
+my $GRPCURL_ARGS = defined($opts{'g'}) ? $opts{'g'} : '';
 
 if (!(@PROTOFILES and $ADDRESS)) {
    print "$0 -p ./helloworld.proto localhost:50051\n";
@@ -65,7 +66,7 @@ sub main {
             #printf("grpcurl -proto %s -d '%s' %s %s", $protofile, $data_string, $ADDRESS, $servicePath);
 
             foreach my $data_test (data_to_tests($data_string)) {
-                my $grit_cmd = sprintf("grit_endpoint_protofuzz.pl -w %s -d '%s' -g '-plaintext -proto %s' %s %s", $WORDLIST, $data_test, $protofile, $ADDRESS, $servicePath);
+                my $grit_cmd = sprintf("grit_endpoint_protofuzz.pl -w %s -d '%s' -g '%s -proto %s' %s %s", $WORDLIST, $data_test, $GRPCURL_ARGS, $protofile, $ADDRESS, $servicePath);
                 printf("%s\n", $grit_cmd);
             }
          }

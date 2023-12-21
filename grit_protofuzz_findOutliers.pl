@@ -1,4 +1,4 @@
-#!env perl
+#!/usr/bin/env perl
 # https://github.com/JonStratton/grpc-reflectionless-information-tester
 # Looks for outliers in the 
 #################
