@@ -22,7 +22,7 @@ my $DATA     = $opts{'d'};
 my $ADDRESS  = $ARGV[0];
 my $SERVICE_NAME = $ARGV[1];
 
-if (!($DATA and $ADDRESS and $SERVICE_NAME)) {
+if (!($DATA and $ADDRESS and $SERVICE_NAME and $WORDLIST)) {
    print "$0 -w ./all-attacks-unix.txt -d '{\"name\":\"_PAYLOAD_\"}' -g '-plaintext -proto ./helloworld.proto' localhost:50051 helloworld.Greeter/SayHello\n";
    exit(1);
 }
@@ -110,11 +110,12 @@ sub grpcurl_request {
    print $chld_in $data;
    close($chld_in); # Need to close the write pipe or thread will hange!
    $line = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_out>);
-   $error = join('', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_err>);
+   $error = join('\n', map{ s/^(\s*)|(\s*)$//g; $_ } <$chld_err>);
 
    printf("%s|service: %s\n", $request_hash, $service);
    printf("%s|payload: %s\n", $request_hash, $data);
    printf("%s|return: %s\n", $request_hash, $line);
+   printf("%s|error: %s\n", $request_hash, $error);
    printf("%s|time: %f\n", $request_hash, (time - $start_time));
 }
 

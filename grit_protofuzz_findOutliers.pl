@@ -10,15 +10,14 @@ use strict;
 use warnings;
 use Getopt::Std;
 use Math::Complex qw(sqrt);
-use Data::Dumper;
 
 # Command line params
 my %opts = ();
-getopts('vi:', \%opts);
+getopts('vi:z:', \%opts);
 
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
 my @INFILES = defined($opts{'i'}) ? split(/,\s*/, $opts{'i'}, -1) : [];
-my $OUTLIER_ZSCORE = 2;
+my $OUTLIER_ZSCORE = defined($opts{'z'}) ? $opts{'z'} : 2;
 
 if (!(@INFILES)) {
    print "$0 -i ./myInputFile.txt\n";
@@ -73,6 +72,7 @@ sub find_outliers {
    foreach my $id (keys(%reportData)) {
       push(@{$metricsToCheck{'time'}}, $reportData{$id}{'time'});
       push(@{$metricsToCheck{'returnLength'}}, length($reportData{$id}{'return'}));
+      push(@{$metricsToCheck{'errorLength'}}, length($reportData{$id}{'error'}));
    }
 
    my (%metricsToStddev);
@@ -83,10 +83,13 @@ sub find_outliers {
    my @outliers;
    foreach my $id (keys(%reportData)) {
       my ($timeStddev, $timeMean) = @{$metricsToStddev{'time'}};
-      push(@outliers, $id) if ($timeStddev && ((($reportData{$id}{'time'} - $timeMean) / $timeStddev) >= $OUTLIER_ZSCORE));
+      push(@outliers, $id) if ($timeStddev && (abs(($reportData{$id}{'time'} - $timeMean) / $timeStddev) >= $OUTLIER_ZSCORE));
 
       my ($returnStddev, $returnMean) = @{$metricsToStddev{'returnLength'}};
-      push(@outliers, $id) if ($returnStddev && (((length($reportData{$id}{'return'}) - $returnMean) / $returnStddev) >= $OUTLIER_ZSCORE));
+      push(@outliers, $id) if ($returnStddev && (abs((length($reportData{$id}{'return'}) - $returnMean) / $returnStddev) >= $OUTLIER_ZSCORE));
+
+      my ($errorStddev, $errorMean) = @{$metricsToStddev{'errorLength'}};
+      push(@outliers, $id) if ($errorStddev && (abs((length($reportData{$id}{'error'}) - $errorMean) / $errorStddev) >= $OUTLIER_ZSCORE));
    }
    return(@outliers);
 }
@@ -99,7 +102,7 @@ sub read_infile {
       while(my $line = <$infile_h>) {
          chomp($line);
          # Like: 12341234|return: xxxx
-         $line =~ /^(\w+)\|(\w+): (.*)$/;
+         $line =~ /^([^\|]+)\|(\w+): (.*)$/;
          my ($id, $tag, $value) = ($1, $2, $3);
          ${$reportData_ref}{$id}{$tag} = $value;
       }
