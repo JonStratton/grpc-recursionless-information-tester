@@ -41,11 +41,16 @@ sub main {
       $serviceToReportData{$service}{$id} = $reportData{$id};
    }
 
-   my @outliers;
+   my %outliers;
    foreach my $service (keys(%serviceToReportData)) {
-      push(@outliers, find_outliers(%{$serviceToReportData{$service}}));
+      find_outliers($serviceToReportData{$service}, \%outliers);
    }
-   printf("Outliers: %s\n", join(', ', @outliers)) if (@outliers);
+
+   foreach my $id (sort(keys(%outliers))) {
+      #printf("%s: %s", $id, join(', ', sort(values($outliers{$id}))));
+      my $outlier_items = join(', ', sort(@{$outliers{$id}}));
+      printf("%s: %s\n", $id, $outlier_items);
+   }
 
    return 0;
 }
@@ -66,13 +71,13 @@ sub standard_dev {
 
 # Just transaction time and return length across all records as of now.
 sub find_outliers {
-   my (%reportData) = @_;
+   my ($reportDataRef, $outliersRef) = @_;
 
    my (%metricsToCheck);
-   foreach my $id (keys(%reportData)) {
-      push(@{$metricsToCheck{'time'}}, $reportData{$id}{'time'});
-      push(@{$metricsToCheck{'returnLength'}}, length($reportData{$id}{'return'}));
-      push(@{$metricsToCheck{'errorLength'}}, length($reportData{$id}{'error'}));
+   foreach my $id (keys(%{$reportDataRef})) {
+      push(@{$metricsToCheck{'time'}}, ${$reportDataRef}{$id}{'time'});
+      push(@{$metricsToCheck{'return length'}}, length(${$reportDataRef}{$id}{'return'}));
+      push(@{$metricsToCheck{'error length'}}, length(${$reportDataRef}{$id}{'error'}));
    }
 
    my (%metricsToStddev);
@@ -80,18 +85,17 @@ sub find_outliers {
       @{$metricsToStddev{$metric}} = standard_dev(@{$metricsToCheck{$metric}});
    }
 
-   my @outliers;
-   foreach my $id (keys(%reportData)) {
+   foreach my $id (keys(%{$reportDataRef})) {
       my ($timeStddev, $timeMean) = @{$metricsToStddev{'time'}};
-      push(@outliers, $id) if ($timeStddev && (abs(($reportData{$id}{'time'} - $timeMean) / $timeStddev) >= $OUTLIER_ZSCORE));
+      push(@{${$outliersRef}{$id}}, 'time') if ($timeStddev && (abs((${$reportDataRef}{$id}{'time'} - $timeMean) / $timeStddev) >= $OUTLIER_ZSCORE));
 
-      my ($returnStddev, $returnMean) = @{$metricsToStddev{'returnLength'}};
-      push(@outliers, $id) if ($returnStddev && (abs((length($reportData{$id}{'return'}) - $returnMean) / $returnStddev) >= $OUTLIER_ZSCORE));
+      my ($returnStddev, $returnMean) = @{$metricsToStddev{'return length'}};
+      push(@{${$outliersRef}{$id}}, 'return length') if ($returnStddev && (abs((length(${$reportDataRef}{$id}{'return'}) - $returnMean) / $returnStddev) >= $OUTLIER_ZSCORE));
 
-      my ($errorStddev, $errorMean) = @{$metricsToStddev{'errorLength'}};
-      push(@outliers, $id) if ($errorStddev && (abs((length($reportData{$id}{'error'}) - $errorMean) / $errorStddev) >= $OUTLIER_ZSCORE));
+      my ($errorStddev, $errorMean) = @{$metricsToStddev{'error length'}};
+      push(@{${$outliersRef}{$id}}, 'error length') if ($errorStddev && (abs((length(${$reportDataRef}{$id}{'error'}) - $errorMean) / $errorStddev) >= $OUTLIER_ZSCORE));
    }
-   return(@outliers);
+   return(0);
 }
 
 sub read_infile {

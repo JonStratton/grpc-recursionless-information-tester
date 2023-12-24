@@ -54,7 +54,8 @@ end
 # server port.
 def main
   s = GRPC::RpcServer.new
-  s.add_http2_port('0.0.0.0:50051', :this_port_is_insecure)
+  # s.add_http2_port('0.0.0.0:50051', :this_port_is_insecure)
+  s.add_http2_port('127.0.0.1:50051', :this_port_is_insecure)
   s.handle(GreeterServer)
   s.handle(UtilServer)
   # Runs the server with SIGHUP, SIGINT and SIGTERM signal handlers to

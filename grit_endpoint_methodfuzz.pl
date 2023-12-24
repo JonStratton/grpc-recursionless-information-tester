@@ -28,7 +28,7 @@ if (!($WORDLIST and $ADDRESS and $SERVICE_NAME)) {
 
 sub main {
    my @found_methods = fuzz_methods_main($THREADS, $WORDLIST, $ADDRESS, $SERVICE_NAME);
-   printf("Found the following: %s\n", join(', ', @found_methods));
+   printf("%s\n", join("\n", @found_methods)) if (@found_methods);
 }
 
 sub fuzz_methods_main {
@@ -80,7 +80,7 @@ sub fuzz_methods_batch {
       printf("%s\n", $grpcurl_new) if ($VERBOSE);
       my $grpcurl_return = grpcurl_request($grpcurl_new, '{"x1":"1"}');
       if ($grpcurl_return) {
-         push(@found_methods, $payload);
+         push(@found_methods, sprintf("%s.%s/%s", $package, $service, $payload));
       }
    }
    return(@found_methods);
