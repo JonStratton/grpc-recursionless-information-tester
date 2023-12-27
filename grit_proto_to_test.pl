@@ -10,21 +10,21 @@
 use strict;
 use warnings;
 use Getopt::Std;
-use Data::Dumper;
+use File::Basename;
 
 # Command line params
 my %opts = ();
 getopts('vp:w:d:g:', \%opts);
 
 my $VERBOSE = exists($opts{'v'}) ? 1 : 0;
-my $WORDLIST = $opts{'w'};
+my @WORDLISTS = defined($opts{'w'}) ? split(/,\s*/, $opts{'w'}, -1) : [];
 my @PROTOFILES = defined($opts{'p'}) ? split(/,\s*/, $opts{'p'}, -1) : [];
 my $ADDRESS = $ARGV[0];
 my $DEFAULTS_JSON = $opts{'d'};
 my $GRPCURL_ARGS = defined($opts{'g'}) ? $opts{'g'} : '';
 
-if (!(@PROTOFILES and $ADDRESS)) {
-   print "$0 -p ./helloworld.proto localhost:50051\n";
+if (!(@PROTOFILES and $ADDRESS and @WORDLISTS)) {
+   print "$0 -w ./wordlist.txt -p ./helloworld.proto localhost:50051\n";
    exit(1);
 }
 
@@ -35,11 +35,13 @@ my %TypesToDefaults = (
 );
 
 my %CustomDefaults = (); # User supplied via JSON
+my %TypeToWordlist = ();
 
-########
-# Main #
-########
+##########################
+# Defaults and wordlists #
+##########################
 
+# Populate %CustomDefaults with the field name to default value
 if ($DEFAULTS_JSON && -e $DEFAULTS_JSON) {
    use JSON; # libjson-pp-perl
    printf("Reading: %s\n", $DEFAULTS_JSON) if ($VERBOSE);
@@ -49,7 +51,22 @@ if ($DEFAULTS_JSON && -e $DEFAULTS_JSON) {
    %CustomDefaults = %{decode_json($json)};
 }
 
+# Populate %TypeToWordlist with Wordlists. If we just have one, set it to the default (*) and use it for all fields.
+foreach my $wordlist (@WORDLISTS) {
+   if ($wordlist =~ /(.+)\s*:\s*(.+)/) {
+      $TypeToWordlist{$1} = $2;
+   } else {
+      $TypeToWordlist{'*'} = $wordlist;
+   }
+}
+
+########
+# Main #
+########
+
 sub main {
+   # $services{$package}{$service}{$rpc}{MessageStuffHere} = Values
+   # $messages{$package}{}
    my (%services, %messages);
    foreach my $protofile (@PROTOFILES) {
        parse_proto_file($protofile, \%services, \%messages);
@@ -63,10 +80,13 @@ sub main {
             my $request   = $services{$package}{$service}{$rpc}{'request'};
             my $protofile = $services{$package}{$service}{$rpc}{'protofile'};
             my $data_string = params_to_string($request, $messages{$package});
-            #printf("grpcurl -proto %s -d '%s' %s %s", $protofile, $data_string, $ADDRESS, $servicePath);
+            my $protofile_dir = dirname($protofile);
+            my $protofile_base = basename($protofile);
 
             foreach my $data_test (data_to_tests($data_string)) {
-                my $grit_cmd = sprintf("grit_endpoint_protofuzz.pl -w %s -d '%s' -g '%s -proto %s' %s %s", $WORDLIST, $data_test, $GRPCURL_ARGS, $protofile, $ADDRESS, $servicePath);
+                my $test = ${$data_test}{'test'};
+                my $wordlist = ${$data_test}{'wordlist'};
+                my $grit_cmd = sprintf("grit_endpoint_protofuzz.pl -w %s -d '%s' -g '%s -import-path %s -proto %s' %s %s", $wordlist, $test, $GRPCURL_ARGS, $protofile_dir, $protofile_base, $ADDRESS, $servicePath);
                 printf("%s\n", $grit_cmd);
             }
          }
@@ -85,10 +105,16 @@ sub data_to_tests {
    foreach my $fuzzIndex (0..(scalar(@substItems)-1)) { # Foreach key/value pair from the payload, we want to make a new test for each set
       my $temp_string = $in_string;
       my $pairIndex = 0;
+      my $wordlist = '';
       foreach my $pairRef (@substItems) { # Set defaults, unless we are looking at the pair we want to fuzz
          my ($name, $type) = (${$pairRef}{'name'}, ${$pairRef}{'type'});
-         my $value = '_PAYLOAD_';
-         if ($fuzzIndex != $pairIndex) {
+
+         my $value = '';
+         # If we are on the item to set the PAYLOAD for AND we have a wordlist for that type (or one for all types)
+         if ($fuzzIndex == $pairIndex && (defined($TypeToWordlist{$type}) || defined($TypeToWordlist{'*'}))) {
+            $value = '_PAYLOAD_';
+            $wordlist = defined($TypeToWordlist{$type}) ? $TypeToWordlist{$type} : $TypeToWordlist{'*'};
+         } else {
             if (defined($CustomDefaults{$name})) {
                $value = $CustomDefaults{$name};
             } elsif (defined($TypesToDefaults{$type})) {
@@ -100,7 +126,7 @@ sub data_to_tests {
          $temp_string =~ s/$type/$value/;
          $pairIndex++;
       }
-      push(@tests, $temp_string);
+      push(@tests, {'test' => $temp_string, 'wordlist' => $wordlist}) if ($wordlist);
    }
 
    return(@tests);
